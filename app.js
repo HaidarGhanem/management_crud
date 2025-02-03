@@ -10,7 +10,7 @@ app.use(cors());
 
 const ITEMS_FILE = path.join(__dirname, 'items.json');
 const TRANSACTIONS_FILE = path.join(__dirname, 'transactions.json');
-const DIST_FOLDER = path.join(__dirname, 'dist'); // Path to the dist folder
+const DIST_FOLDER = path.join(__dirname, 'dist'); 
 
 // Initialize JSON files if they don't exist
 async function initializeFiles() {
@@ -85,23 +85,32 @@ app.delete('/items/:name', async (req, res) => {
 // Transaction endpoint
 app.post('/take-item', async (req, res) => {
     try {
-        let { personName, itemName, amount } = req.body;
+        let { personName, itemName, amount, date } = req.body;
         if (!itemName || !amount) {
             return res.status(400).json({ error: 'Missing required fields' });
         }
         if (!personName) {
             personName = "System";
         }
-        
+
         const items = JSON.parse(await fs.readFile(ITEMS_FILE));
         const itemIndex = items.findIndex(item => item.name === itemName);
-        
+
         if (itemIndex === -1) return res.status(404).json({ error: 'Item not found' });
-        if (items[itemIndex].amount < amount) {
+
+        // Parse amount to a number and ensure it is valid
+        const requestedAmount = parseInt(amount, 10);
+        if (isNaN(requestedAmount) || requestedAmount <= 0) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+        
+        // Check if there's enough amount
+        if (items[itemIndex].amount < requestedAmount) {
             return res.status(400).json({ error: 'Insufficient amount' });
         }
 
-        items[itemIndex].amount -= amount;
+        // Deduct amount and check if it hits zero
+        items[itemIndex].amount -= requestedAmount;
         await fs.writeFile(ITEMS_FILE, JSON.stringify(items, null, 2));
 
         // Record transaction
@@ -109,15 +118,23 @@ app.post('/take-item', async (req, res) => {
         transactions.push({
             personName,
             itemName,
-            amount,
-            timestamp: new Date().toISOString()
+            amount: requestedAmount,
+            date: date || '', // Allow date to be empty string if not provided
         });
         await fs.writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
 
-        res.json({ 
-            message: `${personName} took ${amount} ${items[itemIndex].name}(s)`,
-            remaining: items[itemIndex].amount 
-        });
+        // Check if the amount reached zero
+        if (items[itemIndex].amount === 0) {
+            res.json({ 
+                message: `${personName} took ${requestedAmount} ${items[itemIndex].name}(s). ${items[itemIndex].name} is now out of stock!`,
+                remaining: items[itemIndex].amount 
+            });
+        } else {
+            res.json({ 
+                message: `${personName} took ${requestedAmount} ${items[itemIndex].name}(s)`,
+                remaining: items[itemIndex].amount 
+            });
+        }
     } catch (error) {
         res.status(500).json({ error: `Error processing transaction ${error.message}` });
     }
@@ -126,9 +143,43 @@ app.post('/take-item', async (req, res) => {
 app.get('/transactions', async (req, res) => {
     try {
         const data = await fs.readFile(TRANSACTIONS_FILE);
-        res.json(JSON.parse(data));
+        const transactions = JSON.parse(data);
+        // Sort transactions by date (latest first)
+        transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+        res.json(transactions);
     } catch (error) {
         res.status(500).json({ error: 'Error reading transactions' });
+    }
+});
+
+// Update and delete transactions
+app.put('/transactions/:index', async (req, res) => {
+    try {
+        let transactions = JSON.parse(await fs.readFile(TRANSACTIONS_FILE));
+        const index = parseInt(req.params.index);
+
+        if (index < 0 || index >= transactions.length) return res.status(404).json({ error: 'Transaction not found' });
+
+        transactions[index] = { ...transactions[index], ...req.body };
+        await fs.writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+        res.json(transactions[index]);
+    } catch (error) {
+        res.status(500).json({ error: 'Error updating transaction' });
+    }
+});
+
+app.delete('/transactions/:index', async (req, res) => {
+    try {
+        let transactions = JSON.parse(await fs.readFile(TRANSACTIONS_FILE));
+        const index = parseInt(req.params.index);
+
+        if (index < 0 || index >= transactions.length) return res.status(404).json({ error: 'Transaction not found' });
+
+        transactions.splice(index, 1); // Remove the transaction at the specified index
+        await fs.writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+        res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: 'Error deleting transaction' });
     }
 });
 
