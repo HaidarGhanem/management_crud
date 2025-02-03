@@ -175,6 +175,22 @@ app.delete('/transactions/:index', async (req, res) => {
 
         if (index < 0 || index >= transactions.length) return res.status(404).json({ error: 'Transaction not found' });
 
+        // Get the transaction to be deleted
+        const deletedTransaction = transactions[index];
+        
+        // Update the item amount
+        let items = JSON.parse(await fs.readFile(ITEMS_FILE));
+        const itemIndex = items.findIndex(item => item.name === deletedTransaction.itemName);
+        
+        if (itemIndex === -1) {
+            return res.status(404).json({ error: 'Item not found' });
+        }
+        
+        // Add the amount back to the item
+        items[itemIndex].amount += deletedTransaction.amount; 
+        await fs.writeFile(ITEMS_FILE, JSON.stringify(items, null, 2));
+
+        // Now remove the transaction from the transactions array
         transactions.splice(index, 1); // Remove the transaction at the specified index
         await fs.writeFile(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
         res.status(204).send();
